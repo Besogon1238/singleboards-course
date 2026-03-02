@@ -59,7 +59,7 @@ $ sudo fdisk -l /dev/sdX
 
 Представим схематично, как будет выглядеть финальное пространство sd-карточки. В нашем случае, она на 32 Гб. 
 
-![alt text](/home/taranev/work_repos/singleboards_course/pictures/разбивка_карты.png)
+![alt text](../pictures/разбивка_карты.png)
 
 Теперь нужно пояснить, что и куда будет записано. 
 

@@ -64,6 +64,9 @@ apt-get update
 
 Итак. Кросс-компилятор — есть.
 
+<div style="page-break-after: always;"></div>
+
+
 ### Среда для написания кода
 
 Нужно решить, где писать программный код.  
@@ -117,6 +120,6 @@ qemu-user-static-binfmt — это механизм, который позвол
 
 | |
 | :---: |
-| ![Alt текст](/home/taranev/work_repos/singleboards_course/pictures/example3.png) |
+| ![Alt текст](../pictures/example3.png) |
 | *Пример работы приложения* |
 
