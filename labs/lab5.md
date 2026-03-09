@@ -99,7 +99,7 @@ $ make CROSS_COMPILE=riscv64-linux-gnu- PLATFORM=generic FW_PIC=y
 ```
 $ git clone https://github.com/smaeul/u-boot -b d1-wip
 $ cd u-boot
-$ make CROSS_COMPILE=riscv64-linux-gnu- nezha_defconfig
+$ make CROSS_COMPILE=riscv64-linux-gnu- lichee_rv_dock_defconfig
 $ make CROSS_COMPILE=riscv64-linux-gnu- OPENSBI=../opensbi/build/platform/generic/firmware/fw_dynamic.bin
 ```
 
@@ -189,6 +189,8 @@ label Linux
 Все настройки одноплатника (сетевые адреса, параметры запуска, пароли пользователей и многое другое) хранятся в файлах внутри rootfs (в основном в /etc). Чтобы что-то изменить в работе системы, нужно изменять содержимое rootfs.
 
 Для получения подходящего корневого каталога можно перейти на [страницу регулярных сборок altlinux для riscv64](https://www.altlinux.org/Regular/riscv64) и выбрать подходящий под возможности платы тарболл.
+
+Предлагается остановится на тарболле с [xfce](https://nightly.altlinux.org/sisyphus-riscv64/current/regular-xfce-latest-riscv64.tar.xz).
 
 
 ## Задание

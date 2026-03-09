@@ -106,27 +106,6 @@ h1, h2, h3, h4 {
 }
 </style>
 
-<div class="title-page">
-  <div class="top-section">
-    <h1>МИНИСТЕРСТВО НАУКИ И ВЫСШЕГО ОБРАЗОВАНИЯ РФ</h1>
-    <h2>Саратовский государственный университет имени Н.Г. Чернышевского</h2>
-    <h3>Кафедра __________________________</h3>
-  </div>
-  
-  <div class="middle-section">
-    <h1>МЕТОДИЧЕСКИЕ УКАЗАНИЯ</h1>
-    <h2>к выполнению лабораторных работ</h2>
-    <h2>по курсу "SINGLEBOARDS-COURSE"</h2>
-  </div>
-  
-  <div class="bottom-section">
-    <div class="author">Составитель: Таран Евгений Вячеславович</div>
-    <div class="city-year">Саратов, 2026</div>
-  </div>
-</div>
-
-<div style="page-break-after: always;"></div>
-
 # СОДЕРЖАНИЕ
 
 <!-- Сюда потом вставим оглавление -->
@@ -161,3 +140,6 @@ h1, h2, h3, h4 {
 
 <div style="page-break-after: always;"></div>
 
+@import "lab8.md"
+
+<div style="page-break-after: always;"></div>
