@@ -176,7 +176,7 @@ import spidev
 import time
 
 def spi_sequential_test(bus=0, device=0, speed=1000000):
-    try:
+    
         spi = spidev.SpiDev()
         spi.open(bus, device)
         spi.max_speed_hz = speed
@@ -189,19 +189,17 @@ def spi_sequential_test(bus=0, device=0, speed=1000000):
         print("-" * 40)
 
         for i in range(256):  # От 0 до 255
-            # Отправляем одно число и получаем ответ
-            data_to_send = [i]
-            response = spi.xfer2(data_to_send)
+                # Отправляем одно число и получаем ответ
+                data_to_send = [i]
+                response = spi.xfer2(data_to_send)
 
-            print(f"Отправлено: {data_to_send[0]:3d} (0x{data_to_send[0]:02X}) | "
-                  f"Получено: {response[0]:3d} (0x{response[0]:02X}) | "
-                  f"Бинарно: {response[0]:08b}")
+                print(f"Отправлено: {data_to_send[0]:3d} (0x{data_to_send[0]:02X}) | "
+                        f"Получено: {response[0]:3d} (0x{response[0]:02X}) | "
+                        f"Бинарно: {response[0]:08b}")
 
-            time.sleep(0.01)  # Небольшая пауза для анализатора
+                time.sleep(0.01)  # Небольшая пауза для анализатора
 
         spi.close()
-
-    except Exception as e:
 
 # Запуск теста
 if __name__ == "__main__":

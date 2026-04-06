@@ -143,3 +143,7 @@ h1, h2, h3, h4 {
 @import "lab8.md"
 
 <div style="page-break-after: always;"></div>
+
+@import "lab9.md"
+
+<div style="page-break-after: always;"></div>

@@ -130,7 +130,7 @@ rpm [sisyphus-riscv64] http://ftp.altlinux.org/pub/distributions/ALTLinux/ports/
 # apt-get install u-boot-sunxi-riscv
 ```
 
-Загрузчики для устройств на базе Allwinner D1 после этого окажутся по пути */usr/shere/u-boot*.
+Загрузчики для устройств на базе Allwinner D1 после этого окажутся по пути */usr/share/u-boot*.
 
 Если после этого пакетная база репозитория вам не нужна, можно вернуться с помощью apt-repo к архивам вашей используемой на основной системе ветки репозитория.
 
