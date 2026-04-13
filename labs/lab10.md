@@ -27,13 +27,9 @@
 # apt-get install sigrok-cli sigrok-firmware-fx2lafw pulseview
 ```
 
-После установки может потребоваться загрузка прошивки на анализатор:
-
-```
-$ sigrok-cli -d fx2lafw --driver-serial=XXXX -P
-```
-
 ### Пример использования логического анализатора
+
+**GPIO (General Purpose Input/Output)** — выводы общего назначения, которые могут работать как входы или выходы. Они позволяют микроконтроллеру взаимодействовать с внешними устройствами: читать сигналы от датчиков, управлять светодиодами, реле, двигателями и другими периферийными устройствами. Выводы GPIO являются основным интерфейсом для связи одноплатного компьютера с внешним миром.
 
 Типичная задача для логического анализатора — измерение параметров цифрового сигнала на выводе GPIO. Например, на определённом пине гребёнки платы формируется сигнал с длительностью импульса 10 мс.
 
@@ -97,9 +93,9 @@ Sample point (%): 50
 
 **Потребитель (consumer)** — имя процесса, использующего линию GPIO. Используется для идентификации владельца в системе.
 
-#### API библиотеки
+#### API библиотеки libgpiod2
 
-Основные структуры и функции API:
+Основные структуры и функции:
 
 ```c
 #include <gpiod.h>
@@ -107,65 +103,131 @@ Sample point (%): 50
 // Открытие gpiochip
 struct gpiod_chip *gpiod_chip_open(const char *path);
 
-// Получение информации о линии
-struct gpiod_line *gpiod_chip_get_line(struct gpiod_chip *chip, unsigned int offset);
+// Создание настроек для линии
+struct gpiod_line_settings *gpiod_line_settings_new();
 
-// Запрос линии для использования в качестве выхода
-int gpiod_line_request_output(struct gpiod_line *line, const char *consumer, int default_val);
+// Установка направления линии (вход/выход)
+void gpiod_line_settings_set_direction(struct gpiod_line_settings *settings,
+                                        enum gpiod_line_direction direction);
+// GPIOD_LINE_DIRECTION_INPUT или GPIOD_LINE_DIRECTION_OUTPUT
+
+// Установка начального значения для выхода
+void gpiod_line_settings_set_output_value(struct gpiod_line_settings *settings, int value);
+
+// Освобождение настроек линии
+void gpiod_line_settings_free(struct gpiod_line_settings *settings);
+
+// Создание конфигурации для нескольких линий
+struct gpiod_line_config *gpiod_line_config_new();
+
+// Добавление настроек для конкретных линий
+int gpiod_line_config_add_line_settings(struct gpiod_line_config *config,
+                                         const unsigned int *offsets,
+                                         size_t num_offsets,
+                                         struct gpiod_line_settings *settings);
+
+// Освобождение конфигурации линий
+void gpiod_line_config_free(struct gpiod_line_config *config);
+
+// Создание конфигурации запроса
+struct gpiod_request_config *gpiod_request_config_new();
+
+// Установка имени потребителя (процесса)
+void gpiod_request_config_set_consumer(struct gpiod_request_config *config,
+                                        const char *consumer);
+
+// Освобождение конфигурации запроса
+void gpiod_request_config_free(struct gpiod_request_config *config);
+
+// Запрос линий у чипа
+struct gpiod_line_request *gpiod_chip_request_lines(struct gpiod_chip *chip,
+                                                      struct gpiod_request_config *req_config,
+                                                      struct gpiod_line_config *line_config);
 
 // Установка значения на выводе
-int gpiod_line_set_value(struct gpiod_line *line, int value);
+int gpiod_line_request_set_value(struct gpiod_line_request *request,
+                                  unsigned int offset, int value);
 
-// Освобождение линии
-void gpiod_line_release(struct gpiod_line *line);
+// Освобождение запроса линий
+void gpiod_line_request_release(struct gpiod_line_request *request);
 
 // Закрытие чипа
 void gpiod_chip_close(struct gpiod_chip *chip);
 ```
 
-#### Пример использования
+#### Пример использования (генератор меандра)
 
-Простой пример управления светодиодом на выводе:
+Простой пример генерации меандра на выводе GPIO:
 
 ```c
 #include <gpiod.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <signal.h>
+
+#define GPIO_CHIP    "/dev/gpiochip0"
+#define GPIO_OFFSET  144  // Line 144 - PE16
+
+static volatile int keep_running = 1;
+
+static void signal_handler(int signum)
+{
+    (void)signum;
+    keep_running = 0;
+}
 
 int main() {
     struct gpiod_chip *chip;
-    struct gpiod_line *line;
-    int ret;
+    struct gpiod_line_request *req;
+    struct gpiod_line_settings *settings;
+    struct gpiod_line_config *line_cfg;
+    struct gpiod_request_config *req_cfg;
+    unsigned int offset = GPIO_OFFSET;
 
-    chip = gpiod_chip_open("/dev/gpiochip0");
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+
+    chip = gpiod_chip_open(GPIO_CHIP);
     if (!chip) {
-        perror("Open chip failed");
+        perror("gpiod_chip_open");
         return 1;
     }
 
-    line = gpiod_chip_get_line(chip, 144);  // Line 144 - PE16
-    if (!line) {
-        perror("Get line failed");
+    settings = gpiod_line_settings_new();
+    gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_OUTPUT);
+    gpiod_line_settings_set_output_value(settings, 0);
+
+    line_cfg = gpiod_line_config_new();
+    gpiod_line_config_add_line_settings(line_cfg, &offset, 1, settings);
+
+    req_cfg = gpiod_request_config_new();
+    gpiod_request_config_set_consumer(req_cfg, "wavegen");
+
+    req = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+    if (!req) {
+        perror("gpiod_chip_request_lines");
         gpiod_chip_close(chip);
         return 1;
     }
 
-    ret = gpiod_line_request_output(line, "blink", 0);
-    if (ret < 0) {
-        perror("Request line failed");
-        gpiod_chip_close(chip);
-        return 1;
+    printf("Generating square wave on GPIO line %u (press Ctrl+C to stop)\n", GPIO_OFFSET);
+
+    while (keep_running) {
+
+    // Генерация меандра должна быть здесь
+
     }
 
-    while (1) {
-        gpiod_line_set_value(line, 1);
-        usleep(500000);  // 500 ms
-        gpiod_line_set_value(line, 0);
-        usleep(500000);  // 500 ms
-    }
+    printf("\nCleaning up...\n");
 
-    gpiod_line_release(line);
+    gpiod_line_request_release(req);
     gpiod_chip_close(chip);
+    gpiod_line_settings_free(settings);
+    gpiod_line_config_free(line_cfg);
+    gpiod_request_config_free(req_cfg);
+
+    printf("Done\n");
     return 0;
 }
 ```
@@ -185,25 +247,23 @@ int main() {
 Компиляция с использованием libgpiod2:
 
 ```
-$ gcc -o blink blink.c $(pkg-config --cflags --libs libgpiod)
+$ gcc blink.c -o blink -libgpiod)
 ```
 
 #### Получение информации о доступных выводах
 
-Просмотр доступных gpiochip и линий:
+Просмотр информация о gpiochip и линиях:
 
 ```
-$ gpioinfo
-$ gpiofind PE16
-$ gpioget gpiochip0 144
-$ gpioset gpiochip0 144=1
+$ gpioinfo                   # вся информация о GPIO 
+$ gpioget -c 0 144           # состояние линии 144 на чипе 0
+$ gpioset gpiochip0 144=1    # установить состояние линии 144 на чипе 0 в "1"
+$ gpiomon -c 0 144           # остледить прерывания на линии 144 на чипе 0
 ```
 
-### Генератор меандра на GPIO
+### Задача. Генератор меандра на GPIO
 
-Для исследования временных характеристик и точности генерации сигналов создаётся генератор меандра (периодического сигнала) с программируемой длительностью состояний логического 0 и 1.
-
-Генератор реализуется как консольное приложение на языке Си с использованием библиотеки libgpiod2. Параметры длительности передаются через аргументы командной строки в микросекундах. Генерация сигнала выполняется в непрерывном режиме до получения сигнала прерывания (Ctrl+C), после чего ресурсы (линия GPIO) корректно освобождаются.
+Необходимо, пользуясь примером приведенным ранее создать генератор, реализованный как консольное приложение на языке Си с использованием библиотеки libgpiod2. Параметры длительности должны передаваться через аргументы командной строки в микросекундах. Генерация сигнала должна происходить в непрерывном режиме до получения сигнала прерывания (Ctrl+C), после чего ресурсы (линия GPIO) корректно освобождаются.
 
 Вывод GPIO для генерации — PE16 (линия 144 на gpiochip0).
 
@@ -214,6 +274,7 @@ $ ./generator 250 250
 ```
 
 #### Анализ работы генератора
+
 
 Для анализа характеристик сигнала используется логический анализатор в связке с программой PulseView:
 
