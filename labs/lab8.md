@@ -121,7 +121,7 @@ $ mkdir ~/hasher
 Dir::Etc::main "/dev/null";
 Dir::Etc::parts "/var/empty";
 Dir::Etc::SourceParts "/var/empty";
-Dir::Etc::sourcelist "/путь/к/домашней/директории/apt/sources.list.riscv";
+Dir::Etc::sourcelist "/путь/к/домашней/директории/apt/sources.list.riscv64";
 ```
 Содержимое sources.list.riscv64:
 
