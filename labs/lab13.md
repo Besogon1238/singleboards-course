@@ -1,626 +1,529 @@
-# Лабораторная №13. Протокол MQTT и IoT-системы
+# Лабораторная №13. Протокол MQTT
 
 ## Цель работы
 
-Освоить принципы работы протокола MQTT для построения IoT-систем, научиться настраивать MQTT-брокер и создавать клиентские приложения. Интегрировать систему сбора данных с датчиков (лабораторная №12) в распределённую IoT-систему с использованием MQTT-протокола.
+Изучить протокол MQTT — лёгкий протокол обмена сообщениями для IoT-систем. Освоить архитектуру «издатель-подписчик» (Pub/Sub), научиться настраивать MQTT-брокер Mosquitto на одноплатном компьютере и создавать клиентские приложения на Python и C для публикации и приёма данных.
 
 ## Подготовительный материал
 
 ### Что такое MQTT?
 
-MQTT (Message Queuing Telemetry Transport) — это лёгкий протокол обмена сообщениями, разработанный специально для IoT-устройств с ограниченными ресурсами. Основные особенности:
+MQTT (Message Queuing Telemetry Transport) — лёгкий протокол обмена сообщениями, разработанный в 1999 году для мониторинга нефтепроводов. Сегодня широко применяется в IoT, умных домах, промышленной автоматизации и телеметрии. 
 
-- **Издатель-подписчик (Pub/Sub)**: Клиенты публикуют сообщения в топики, другие клиенты подписываются на топики
-- **Лёгкий протокол**: Минимальный оверхед, подходит для устройств с ограниченной памятью и пропускной способностью
-- **Качество обслуживания (QoS)**: Три уровня гарантии доставки сообщений
-- **Сохраняемые сессии**: Брокер может хранить сообщения для отключённых клиентов
-- **Безопасность**: Поддержка TLS/SSL и аутентификации
+Перечислим основные особенности протокола:
 
-### Архитектура MQTT
+- **Лёгкий протокол** — минимальный заголовок пакета (2 байта), подходит для устройств с ограниченной памятью и медленными каналами
+- **Асинхронная модель** — издатель и подписчик не знают друг о друге, взаимодействуют только через брокер
+- **Устойчивость к обрывам** — keep-alive, сохранённые сессии, сообщения о разрыве.
+
+### Архитектура «издатель-подписчик»
+
+В отличие от клиент-серверной архитектуры, где отправитель напрямую обращается к получателю по адресу, MQTT использует модель Pub/Sub:
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Publisher  │────▶│   Broker    │────▶│ Subscriber  │
-│  (Arduino)  │     │  (Lichee)   │     │  (Web App)  │
-└─────────────┘     └─────────────┘     └─────────────┘
-       │                    │                    │
-       ▼                    ▼                    ▼
-   Публикует           Хранит и           Получает
-   в топик:           перенаправляет     сообщения
-   "sensors/data"     сообщения          из топика
+                  ┌──────────┐
+     ┌──────────▶│  Топик   │────────────┐
+     │            │sensors/t │            │
+     │            └──────────┘            │
+     │                                    │
+┌────┴────┐                        ┌────┴────┐
+│Издатель │      ┌─────────┐       │Подписчик│
+│(Arduino,│────▶│ Брокер  │─────▶│(консоль,│
+│Lichee)  │      │Mosquitto│       │ OLED,   │
+└─────────┘      └─────────┘       │БД и тд.)│
+                                   └─────────┘
 ```
 
-### Основные компоненты
+**Брокер (Broker)** — центральный сервер, принимающий сообщения от издателей и доставляющий их подписчикам. В курсе брокером выступает Lichee RV Dock с установленным Mosquitto.
 
-1. **Брокер (Broker)**: Центральный сервер, который принимает сообщения от издателей и отправляет их подписчикам
-2. **Издатель (Publisher)**: Клиент, который отправляет сообщения в топики
-3. **Подписчик (Subscriber)**: Клиент, который получает сообщения из топиков
-4. **Топик (Topic)**: Иерархическая структура для организации сообщений (например: `home/livingroom/temperature`)
+**Издатель (Publisher)** — клиент, отправляющий данные в топик брокера. Издатель не знает, кто и когда получит его сообщение.
+
+**Подписчик (Subscriber)** — клиент, получающий сообщения из одного или нескольких топиков. Может подписаться на уже работающий поток данных без каких-либо изменений в издателе.
+
+### Топики
+
+Топик (topic) — строковый адрес в иерархической структуре, разделённой символом `/`. Примеры:
+
+| Топик | Данные |
+|-------|--------|
+| `home/livingroom/temperature` | Температура в гостиной |
+| `home/kitchen/humidity` | Влажность на кухне |
+| `lichee/stats/cpu` | Загрузка ЦП одноплатника |
+| `sensors/bme280` | Все данные с датчика BME280 |
+
+**Wildcard-подписки** позволяют подписываться на группы топиков:
+
+- **`+`** — заменяет ровно один уровень иерархии. Подписка `home/+/temperature` получит данные о температуре из всех комнат
+- **`#`** — заменяет любое количество уровней (только в конце). Подписка `home/#` получит все сообщения из всех комнат и подтопиков дома
 
 ### Качество обслуживания (QoS)
 
-- **QoS 0**: "At most once" — сообщение отправляется один раз, без подтверждения
-- **QoS 1**: "At least once" — сообщение гарантированно доставляется, возможны дубликаты
-- **QoS 2**: "Exactly once" — сообщение доставляется ровно один раз (самый надёжный, но медленный)
+MQTT предоставляет три уровня гарантии доставки сообщений:
 
-## Практическая часть
+| Уровень | Название | Описание | Пример использования |
+|---------|----------|----------|---------------------|
+| QoS 0 | At most once | Сообщение отправляется один раз без подтверждения. Возможна потеря. | Телеметрия: температура раз в минуту |
+| QoS 1 | At least once | Брокер подтверждает получение (PUBACK). Возможны дубликаты. | Команды управления освещением |
+| QoS 2 | Exactly once | Четырёхэтапное рукопожатие. Гарантирует ровно одну доставку. | Транзакции, списание средств |
 
-### Задание 1: Установка и настройка MQTT-брокера на Lichee RV Dock
+В рамках данной лабораторной работы используется QoS 0 — самый простой и быстрый режим.
 
-1. Установите MQTT-брокер Mosquitto:
+### Retained-сообщения
 
-```bash
-sudo apt update
-sudo apt install mosquitto mosquitto-clients
-```
+При публикации с флагом `retain = true` брокер сохраняет последнее сообщение в топике и автоматически отправляет его каждому новому подписчику. Это удобно для статусов, которые меняются редко: новый клиент немедленно получает актуальное значение, не дожидаясь следующей публикации.
 
-2. Проверьте статус службы:
+### Will-сообщения
 
-```bash
-sudo systemctl status mosquitto
-```
+Will Message задаётся при подключении клиента к брокеру. Если клиент отключается нештатно (обрыв связи, таймаут keep-alive), брокер автоматически публикует заданное will-сообщение. Это позволяет системе мониторинга узнать, что устройство «отвалилось».
 
-3. Запустите брокер, если он не запущен:
+### MQTT-брокер Mosquitto
 
-```bash
-sudo systemctl start mosquitto
-sudo systemctl enable mosquitto
-```
+Mosquitto — популярный открытый MQTT-брокер, реализующий протоколы MQTT. Доступен в репозиториях ALT Linux.
 
-4. Проверьте работу брокера, отправив тестовое сообщение:
+**Установка и запуск:**
 
 ```bash
-# В первом терминале - подписчик
-mosquitto_sub -h localhost -t "test/topic"
-
-# Во втором терминале - издатель
-mosquitto_pub -h localhost -t "test/topic" -m "Hello MQTT!"
+# apt-get install mosquitto
+# systemctl start mosquitto
+# systemctl enable mosquitto
 ```
 
-### Задание 2: Создание MQTT-клиента на Python
+**Проверка работоспособности командной строкой:**
 
-Создайте файл `mqtt_client.py`:
+```bash
+# В первом терминале — подписчик (ждёт сообщения):
+$ mosquitto_sub -h localhost -t "test/topic"
+
+# Во втором терминале — издатель (отправляет сообщение):
+$ mosquitto_pub -h localhost -t "test/topic" -m "Hello MQTT!"
+```
+
+В первом терминале должно появиться `Hello MQTT!`.
+
+### Python-клиент paho-mqtt
+
+Eclipse Paho — библиотека для работы с MQTT на разных языках. Для Python:
+
+```bash
+# apt-get install python3-module-paho
+```
+
+Основные callback-функции:
 
 ```python
 import paho.mqtt.client as mqtt
-import json
-import time
-import random
 
-# Конфигурация
-BROKER = "localhost"
-PORT = 1883
-TOPIC_PUBLISH = "sensors/data"
-TOPIC_SUBSCRIBE = "sensors/control"
-
-# Callback при подключении
 def on_connect(client, userdata, flags, rc):
-    print(f"Подключено с кодом: {rc}")
-    client.subscribe(TOPIC_SUBSCRIBE)
-    print(f"Подписан на топик: {TOPIC_SUBSCRIBE}")
+    """Вызывается при подключении к брокеру. rc == 0 — успех."""
+    print(f"Connected: {rc}")
 
-# Callback при получении сообщения
 def on_message(client, userdata, msg):
-    print(f"Получено сообщение: {msg.topic} -> {msg.payload.decode()}")
+    """Вызывается при получении сообщения из подписанного топика."""
+    print(f"{msg.topic}: {msg.payload.decode()}")
 
-# Callback при публикации
-def on_publish(client, userdata, mid):
-    print(f"Сообщение опубликовано (mid: {mid})")
-
-# Создание клиента
 client = mqtt.Client()
 client.on_connect = on_connect
 client.on_message = on_message
-client.on_publish = on_publish
 
-# Подключение
-client.connect(BROKER, PORT, 60)
-client.loop_start()
-
-try:
-    while True:
-        # Генерация тестовых данных
-        sensor_data = {
-            "temperature": round(random.uniform(20.0, 25.0), 2),
-            "humidity": round(random.uniform(40.0, 60.0), 2),
-            "pressure": round(random.uniform(980.0, 1020.0), 2),
-            "timestamp": time.time()
-        }
-        
-        # Публикация данных
-        result = client.publish(
-            TOPIC_PUBLISH,
-            json.dumps(sensor_data),
-            qos=1
-        )
-        
-        if result.rc == mqtt.MQTT_ERR_SUCCESS:
-            print(f"Опубликовано: {sensor_data}")
-        else:
-            print(f"Ошибка публикации: {result.rc}")
-        
-        time.sleep(5)
-        
-except KeyboardInterrupt:
-    print("\nОстановка клиента...")
-    client.loop_stop()
-    client.disconnect()
+client.connect("localhost", 1883)    # адрес брокера, порт
+client.subscribe("topic/name")       # подписка на топик
+client.loop_forever()                # бесконечный цикл обработки
 ```
 
-### Задание 3: Интеграция с системой сбора данных
-
-Модифицируйте код из лабораторной №12 для отправки данных через MQTT:
+Для публикации используется метод `publish()`:
 
 ```python
-# Файл: lichee_system_mqtt.py
+client.publish("topic/name", "data_string")
+```
+
+### C-клиент libmosquitto
+
+Для одноплатника доступна библиотека `libmosquitto` — нативная C-реализация клиента MQTT:
+
+```bash
+# apt-get install libpaho-mqtt1 libpaho-mqtt-devel
+```
+
+## Практическая часть
+
+### Шаг 1: Установка и настройка брокера Mosquitto на Lichee
+
+Брокер будет запущен на Lichee RV Dock. На ПК установите только клиентские утилиты для тестирования.
+
+1. **На Lichee:** установите Mosquitto и клиентские утилиты:
+
+```bash
+# apt-get install mosquitto mosquitto-clients
+```
+
+2. **На ПК (ALT Linux):** установите только клиентские утилиты:
+
+```bash
+# apt-get install mosquitto-clients
+```
+
+3. **На Lichee:** запустите брокер и добавьте в автозагрузку:
+
+```bash
+# systemctl start mosquitto
+# systemctl enable mosquitto
+```
+
+4. **На Lichee:** настройте брокер для приёма внешних подключений. По умолчанию Mosquitto слушает только `localhost`. Добавьте в файл `/etc/mosquitto/mosquitto.conf` строки:
+
+```
+listener 1883 0.0.0.0
+allow_anonymous true
+```
+
+Перезапустите брокер:
+
+```bash
+# systemctl restart mosquitto
+```
+
+Проверьте, что порт 1883 слушается на всех интерфейсах:
+
+```bash
+$ ss -tlnp | grep 1883
+```
+
+Вывод должен содержать `0.0.0.0:1883` или `*:1883`.
+
+5. **Узнайте IP-адрес Lichee** (понадобится для подключения подписчика с ПК):
+
+```bash
+$ ip a | grep "inet " | grep -v 127.0.0.1
+```
+
+или:
+
+```bash
+$ hostname -I
+```
+
+Запишите этот IP-адрес — далее будем обозначать его `<IP_LICHEE>`.
+
+6. **Проверка связности с ПК:**
+
+```bash
+# С ПК проверьте доступность Lichee:
+$ ping <IP_LICHEE>
+
+# Проверьте, что порт 1883 на Lichee открыт:
+$ telnet <IP_LICHEE> 1883
+```
+
+Если соединение устанавливается (в telnet появится `Connected` или escape-символ) — брокер доступен.
+
+7. **Протестируйте Pub/Sub между Lichee и ПК:**
+
+**Терминал 1 — на ПК, подписчик:**
+
+```bash
+$ mosquitto_sub -h <IP_LICHEE> -t "test/hello"
+```
+
+**Терминал 2 — на Lichee (по SSH), издатель:**
+
+```bash
+$ mosquitto_pub -h localhost -t "test/hello" -m "Hello from Lichee!"
+```
+
+В терминале на ПК должно появиться: `Hello from Lichee!`. Брокер работает, сеть настроена.
+
+### Шаг 2: Python-издатель системных метрик
+
+Создайте скрипт `mqtt_publisher.py`, который читает загрузку CPU и использование RAM и публикует их в топик `lichee/stats`:
+
+```python
+#!/usr/bin/env python3
+
 import paho.mqtt.client as mqtt
 import json
 import time
-from lichee_system import LicheeSystem
 
-class MQTTLicheeSystem(LicheeSystem):
-    def __init__(self):
-        super().__init__()
-        self.mqtt_client = mqtt.Client()
-        self.mqtt_client.on_connect = self.on_mqtt_connect
-        self.mqtt_client.connect("localhost", 1883, 60)
-        self.mqtt_client.loop_start()
-    
-    def on_mqtt_connect(self, client, userdata, flags, rc):
-        print(f"MQTT подключен с кодом: {rc}")
-        client.subscribe("sensors/control")
-    
-    def process_sensor_data(self, data):
-        # Обработка данных от Arduino
-        processed_data = super().process_sensor_data(data)
-        
-        # Отправка через MQTT
-        mqtt_message = {
-            "source": "arduino_bme280",
-            "data": processed_data,
-            "timestamp": time.time(),
-            "location": "lab_room"
-        }
-        
-        self.mqtt_client.publish(
-            "sensors/arduino/data",
-            json.dumps(mqtt_message),
-            qos=1
-        )
-        
-        return processed_data
-    
-    def cleanup(self):
-        super().cleanup()
-        self.mqtt_client.loop_stop()
-        self.mqtt_client.disconnect()
+TOPIC = "lichee/stats"
+INTERVAL = 2.0
+
+def get_cpu_usage():
+    """Возвращает загрузку CPU в процентах (от 0 до 100)."""
+    with open("/proc/stat") as f:
+        fields = f.readline().split()
+    user, nice, system, idle = map(int, fields[1:5])
+    total = user + nice + system + idle
+
+    # Расчёт по дельте между вызовами
+    if not hasattr(get_cpu_usage, "prev"):
+        get_cpu_usage.prev = (total, idle)
+        return 0.0
+
+    prev_total, prev_idle = get_cpu_usage.prev
+    get_cpu_usage.prev = (total, idle)
+
+    diff_total = total - prev_total
+    diff_idle  = idle - prev_idle
+    return 100.0 * (1.0 - diff_idle / diff_total) if diff_total > 0 else 0.0
+
+def get_ram_usage():
+    """Возвращает использование RAM в процентах (от 0 до 100)."""
+    total = free = 0
+    with open("/proc/meminfo") as f:
+        for line in f:
+            if line.startswith("MemTotal:"):
+                total = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                free = int(line.split()[1])
+    return 100.0 * (total - free) / total if total > 0 else 0.0
+
+def main():
+    client = mqtt.Client()
+    client.connect("localhost", 1883)
+    client.loop_start()
+
+    print(f"Publishing to '{TOPIC}' every {INTERVAL}s. Ctrl+C to stop.")
+    try:
+        while True:
+            cpu = get_cpu_usage()
+            ram = get_ram_usage()
+            payload = json.dumps({"cpu": round(cpu, 1), "ram": round(ram, 1)})
+            client.publish(TOPIC, payload)
+            print(f"Published: {payload}")
+            time.sleep(INTERVAL)
+    except KeyboardInterrupt:
+        print("Stopped.")
+    finally:
+        client.loop_stop()
+        client.disconnect()
 
 if __name__ == "__main__":
-    system = MQTTLicheeSystem()
-    
-    try:
-        print("Система MQTT-Lichee запущена")
-        print("Данные будут публиковаться в топик: sensors/arduino/data")
-        print("Для остановки нажмите Ctrl+C")
-        
-        while True:
-            # Чтение данных от Arduino
-            data = system.read_from_spi()
-            if data:
-                system.process_sensor_data(data)
-            
-            time.sleep(2)
-            
-    except KeyboardInterrupt:
-        print("\nОстановка системы...")
-        system.cleanup()
+    main()
 ```
 
-### Задание 4: Создание веб-интерфейса для мониторинга
+**Объяснение:**
+- `get_cpu_usage()` читает `/proc/stat`, вычисляя загрузку как `100% − доля_простоя` между двумя вызовами. Первый вызов возвращает 0 (базовый замер), последующие — реальное значение
+- `get_ram_usage()` читает `/proc/meminfo`, находит поля `MemTotal` и `MemAvailable`, вычисляет процент занятой памяти
+- Данные упаковываются в JSON и публикуются каждые 2 секунды
+- `loop_start()` запускает сетевой цикл paho в фоновом потоке, не блокируя основной
 
-Создайте простой веб-интерфейс для отображения данных:
+Запустите скрипт:
+
+```bash
+$ python3 mqtt_publisher.py
+```
+
+Оставьте работать — на следующем шаге мы подпишемся на этот топик.
+
+### Шаг 3: Python-подписчик на ПК
+
+Скрипт подписчика будет запущен на вашем ПК. Он подключается к брокеру на Lichee по IP-адресу и получает данные из топика `lichee/stats`.
+
+Создайте на ПК скрипт `mqtt_subscriber.py`:
 
 ```python
-# Файл: mqtt_web_monitor.py
-from flask import Flask, render_template, jsonify
-from flask_socketio import SocketIO, emit
+#!/usr/bin/env python3
+
 import paho.mqtt.client as mqtt
 import json
-import threading
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret!'
-socketio = SocketIO(app)
+# IP-адрес Lichee RV Dock (узнайте командой "hostname -I" на Lichee)
+BROKER = "192.168.1.50"
+TOPIC  = "lichee/stats"
 
-# Хранилище данных
-sensor_data = {
-    'temperature': [],
-    'humidity': [],
-    'pressure': []
-}
+def on_connect(client, userdata, flags, rc):
+    print(f"Connected to broker (rc={rc})")
+    client.subscribe(TOPIC)
+    print(f"Subscribed to '{TOPIC}'")
 
-# MQTT Callback
-def on_mqtt_message(client, userdata, msg):
+def on_message(client, userdata, msg):
     try:
         data = json.loads(msg.payload.decode())
-        
-        # Сохранение данных
-        for key in ['temperature', 'humidity', 'pressure']:
-            if key in data.get('data', {}):
-                sensor_data[key].append(data['data'][key])
-                # Ограничение истории
-                if len(sensor_data[key]) > 100:
-                    sensor_data[key].pop(0)
-        
-        # Отправка через WebSocket
-        socketio.emit('sensor_update', data)
-        
-    except Exception as e:
-        print(f"Ошибка обработки MQTT: {e}")
+        cpu = data.get("cpu", "?")
+        ram = data.get("ram", "?")
+        print(f"CPU: {cpu:5.1f}%   RAM: {ram:5.1f}%")
+    except json.JSONDecodeError:
+        print(f"Raw: {msg.payload.decode()}")
 
-# Запуск MQTT-клиента в отдельном потоке
-def start_mqtt_client():
+def main():
     client = mqtt.Client()
-    client.on_message = on_mqtt_message
-    client.connect("localhost", 1883, 60)
-    client.subscribe("sensors/arduino/data")
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(BROKER, 1883)
+    print(f"Connected to MQTT broker at {BROKER}")
+    print("Listening for messages...")
     client.loop_forever()
 
-# Маршруты Flask
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/api/data')
-def get_data():
-    return jsonify(sensor_data)
-
-@app.route('/api/latest')
-def get_latest():
-    latest = {}
-    for key in sensor_data:
-        if sensor_data[key]:
-            latest[key] = sensor_data[key][-1]
-    return jsonify(latest)
-
-if __name__ == '__main__':
-    # Запуск MQTT-клиента в фоне
-    mqtt_thread = threading.Thread(target=start_mqtt_client, daemon=True)
-    mqtt_thread.start()
-    
-    # Запуск веб-сервера
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+if __name__ == "__main__":
+    main()
 ```
 
-Создайте HTML-шаблон `templates/index.html`:
+**Объяснение:**
+- `BROKER` — IP-адрес Lichee RV Dock в вашей локальной сети. Замените `"192.168.1.50"` на реальный адрес, полученный командой `hostname -I` на Lichee
+- `on_connect` вызывается при успешном подключении — здесь выполняется подписка на топик
+- `on_message` вызывается при получении сообщения: парсинг JSON, извлечение `cpu` и `ram`, форматированный вывод
+- `loop_forever()` блокирует поток и обрабатывает входящие MQTT-пакеты бесконечно
 
-```html
-<!DOCTYPE html>
-<html>
-<head>
-    <title>IoT Monitor - Лабораторная №13</title>
-    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .cards { display: flex; gap: 20px; margin-bottom: 30px; }
-        .card { flex: 1; padding: 20px; border-radius: 8px; background: #f5f5f5; }
-        .chart-container { margin-bottom: 30px; }
-        h1 { color: #333; }
-        .value { font-size: 24px; font-weight: bold; }
-        .unit { color: #666; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>IoT Monitor - Данные с датчика BME280</h1>
-        
-        <div class="cards">
-            <div class="card" id="temp-card">
-                <h3>Температура</h3>
-                <div class="value" id="temp-value">--</div>
-                <div class="unit">°C</div>
-            </div>
-            <div class="card" id="hum-card">
-                <h3>Влажность</h3>
-                <div class="value" id="hum-value">--</div>
-                <div class="unit">%</div>
-            </div>
-            <div class="card" id="press-card">
-                <h3>Давление</h3>
-                <div class="value" id="press-value">--</div>
-                <div class="unit">hPa</div>
-            </div>
-        </div>
-        
-        <div class="chart-container">
-            <canvas id="sensorChart"></canvas>
-        </div>
-        
-        <div id="log"></div>
-    </div>
-    
-    <script>
-        const socket = io();
-        const ctx = document.getElementById('sensorChart').getContext('2d');
-        
-        let chart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [
-                    {
-                        label: 'Температура (°C)',
-                        data: [],
-                        borderColor: 'rgb(255, 99, 132)',
-                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
-                        yAxisID: 'y'
-                    },
-                    {
-                        label: 'Влажность (%)',
-                        data: [],
-                        borderColor: 'rgb(54, 162, 235)',
-                        backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                        yAxisID: 'y1'
-                    },
-                    {
-                        label: 'Давление (hPa)',
-                        data: [],
-                        borderColor: 'rgb(75, 192, 192)',
-                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                        yAxisID: 'y2'
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                interaction: {
-                    mode: 'index',
-                    intersect: false
-                },
-                scales: {
-                    x: {
-                        title: {
-                            display: true,
-                            text: 'Время'
-                        }
-                    },
-                    y: {
-                        type: 'linear',
-                        display: true,
-                        position: 'left',
-                        title: {
-                            display: true,
-                            text: 'Температура (°C)'
-                        }
-                    },
-                    y1: {
-                        type: 'linear',
-                        display: true,
-                        position: 'right',
-                        title: {
-                            display: true,
-                            text: 'Влажность (%)'
-                        },
-                        grid: {
-                            drawOnChartArea: false
-                        }
-                    },
-                    y2: {
-                        type: 'linear',
-                        display: false,
-                        position: 'right'
-                    }
-                }
-            }
-        });
-        
-        // Обработка MQTT сообщений через WebSocket
-        socket.on('sensor_update', function(data) {
-            const sensorData = data.data;
-            const timestamp = new Date().toLocaleTimeString();
-            
-            // Обновление значений
-            document.getElementById('temp-value').textContent = 
-                sensorData.temperature ? sensorData.temperature.toFixed(1) : '--';
-            document.getElementById('hum-value').textContent = 
-                sensorData.humidity ? sensorData.humidity.toFixed(1) : '--';
-            document.getElementById('press-value').textContent = 
-                sensorData.pressure ? sensorData.pressure.toFixed(1) : '--';
-            
-            // Обновление графика
-            chart.data.labels.push(timestamp);
-            chart.data.datasets[0].data.push(sensorData.temperature);
-            chart.data.datasets[1].data.push(sensorData.humidity);
-            chart.data.datasets[2].data.push(sensorData.pressure);
-            
-            // Ограничение количества точек
-            if (chart.data.labels.length > 20) {
-                chart.data.labels.shift();
-                chart.data.datasets.forEach(dataset => dataset.data.shift());
-            }
-            
-            chart.update();
-            
-            // Логирование
-            const log = document.getElementById('log');
-            const logEntry = document.createElement('div');
-            logEntry.textContent = `[${timestamp}] Получены данные: T=${sensorData.temperature}°C, H=${sensorData.humidity}%, P=${sensorData.pressure}hPa`;
-            log.prepend(logEntry);
-            
-            if (log.children.length > 10) {
-                log.removeChild(log.lastChild);
-            }
-        });
-        
-        // Загрузка исторических данных
-        fetch('/api/latest')
-            .then(response => response.json())
-            .then(data => {
-                if (data.temperature) {
-                    document.getElementById('temp-value').textContent = data.temperature.toFixed(1);
-                }
-                if (data.humidity) {
-                    document.getElementById('hum-value').textContent = data.humidity.toFixed(1);
-                }
-                if (data.pressure) {
-                    document.getElementById('press-value').textContent = data.pressure.toFixed(1);
-                }
-            });
-    </script>
-</body>
-</html>
+**Установка paho-mqtt на ПК** (если не установлена):
+
+```bash
+# apt-get install python3-module-paho-mqtt
 ```
 
-### Задание 5: Создание MQTT-клиента для Arduino
+**Запуск:**
 
-Добавьте MQTT-поддержку в код Arduino для прямой публикации данных:
+1. Убедитесь, что издатель `mqtt_publisher.py` запущен на Lichee (шаг 2)
+2. Запустите подписчик на ПК:
 
-```cpp
-// Файл: arduino_mqtt_client.ino
-#include <WiFi.h>
-#include <PubSubClient.h>
-#include <Wire.h>
-#include <Adafruit_BME280.h>
+```bash
+$ python3 mqtt_subscriber.py
+```
 
-// Настройки WiFi
-const char* ssid = "your_SSID";
-const char* password = "your_PASSWORD";
+В консоли должно появиться:
 
-// Настройки MQTT
-const char* mqtt_server = "192.168.1.100"; // IP Lichee RV Dock
-const int mqtt_port = 1883;
-const char* mqtt_topic = "sensors/arduino/raw";
+```
+Connected to broker (rc=0)
+Subscribed to 'lichee/stats'
+CPU:  12.3%   RAM:  45.7%
+CPU:  15.1%   RAM:  45.8%
+...
+```
 
-WiFiClient espClient;
-PubSubClient client(espClient);
-Adafruit_BME280 bme;
+### Шаг 4: C-клиент-издатель (кросс-компиляция под RISC-V)
 
-unsigned long lastMsg = 0;
-#define MSG_BUFFER_SIZE (50)
-char msg[MSG_BUFFER_SIZE];
+MQTT-клиент можно написать не только на Python, но и на C с использованием библиотеки `libmosquitto`. Это даёт меньший размер бинарного файла и лучшую производительность.
 
-void setup_wifi() {
-  delay(10);
-  Serial.println();
-  Serial.print("Подключение к ");
-  Serial.println(ssid);
+**4a. Установка библиотек на одноплатнике (для нативной компиляции):**
 
-  WiFi.begin(ssid, password);
+```bash
+# apt-get install libpaho-mqtt1 libpaho-mqtt-devel
+```
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
+**4b. Исходный код** (`mqtt_c_publisher.c`):
 
-  Serial.println("");
-  Serial.println("WiFi подключен");
-  Serial.print("IP адрес: ");
-  Serial.println(WiFi.localIP());
-}
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <mosquitto.h>
 
-void reconnect() {
-  while (!client.connected()) {
-    Serial.print("Попытка подключения к MQTT...");
-    
-    String clientId = "ArduinoClient-";
-    clientId += String(random(0xffff), HEX);
-    
-    if (client.connect(clientId.c_str())) {
-      Serial.println("подключено");
-      client.publish("sensors/status", "Arduino подключен");
-    } else {
-      Serial.print("ошибка, rc=");
-      Serial.print(client.state());
-      Serial.println(" повтор через 5 секунд");
-      delay(5000);
+#define MQTT_HOST   "localhost"
+#define MQTT_PORT   1883
+#define MQTT_TOPIC  "lichee/stats"
+#define KEEPALIVE   60
+
+static float get_cpu_usage(void) {
+    FILE *fp = fopen("/proc/stat", "r");
+    if (!fp) return -1;
+
+    unsigned long user, nice, system, idle;
+    fscanf(fp, "cpu %lu %lu %lu %lu", &user, &nice, &system, &idle);
+    fclose(fp);
+
+    unsigned long total = user + nice + system + idle;
+    static unsigned long prev_total = 0, prev_idle = 0;
+    float usage = 0.0;
+
+    if (prev_total > 0) {
+        float diff_idle  = idle - prev_idle;
+        float diff_total = total - prev_total;
+        usage = 100.0 * (1.0 - diff_idle / diff_total);
     }
-  }
+    prev_total = total;
+    prev_idle  = idle;
+    return usage;
 }
 
-void setup() {
-  Serial.begin(115200);
-  
-  // Инициализация BME280
-  if (!bme.begin(0x76)) {
-    Serial.println("Не удалось найти датчик BME280!");
-    while (1);
-  }
-  
-  setup_wifi();
-  client.setServer(mqtt_server, mqtt_port);
+static float get_ram_usage(void) {
+    FILE *fp = fopen("/proc/meminfo", "r");
+    if (!fp) return -1;
+
+    unsigned long total = 0, available = 0;
+    char line[128];
+    while (fgets(line, sizeof(line), fp)) {
+        if (strstr(line, "MemTotal:"))
+            sscanf(line, "MemTotal: %lu kB", &total);
+        if (strstr(line, "MemAvailable:"))
+            sscanf(line, "MemAvailable: %lu kB", &available);
+    }
+    fclose(fp);
+    return (total > 0) ? 100.0 * (total - available) / total : -1;
 }
 
-void loop() {
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
+int main(void) {
+    mosquitto_lib_init();
 
-  unsigned long now = millis();
-  if (now - lastMsg > 5000) {
-    lastMsg = now;
-    
-    // Чтение данных с датчика
-    float temperature = bme.readTemperature();
-    float humidity = bme.readHumidity();
-    float pressure = bme.readPressure() / 100.0F;
-    
-    // Формирование JSON сообщения
-    String jsonMsg = "{";
-    jsonMsg += "\"temperature\":" + String(temperature, 2) + ",";
-    jsonMsg += "\"humidity\":" + String(humidity, 2) + ",";
-    jsonMsg += "\"pressure\":" + String(pressure, 2);
-    jsonMsg += "}";
-    
-    // Публикация в MQTT
-    Serial.print("Публикация: ");
-    Serial.println(jsonMsg);
-    client.publish(mqtt_topic, jsonMsg.c_str());
-    
-    // Также отправка по SPI (для обратной совместимости)
-    Serial1.print(jsonMsg);
-  }
+    struct mosquitto *mosq = mosquitto_new(NULL, true, NULL);
+    if (!mosq) {
+        fprintf(stderr, "Error: mosquitto_new failed\n");
+        return 1;
+    }
+
+    if (mosquitto_connect(mosq, MQTT_HOST, MQTT_PORT, KEEPALIVE)) {
+        fprintf(stderr, "Error: cannot connect to broker\n");
+        mosquitto_destroy(mosq);
+        mosquitto_lib_cleanup();
+        return 1;
+    }
+
+    printf("C MQTT publisher started.\n");
+    printf("Publishing to '%s'. Press Ctrl+C to stop.\n", MQTT_TOPIC);
+
+    char payload[128];
+    while (1) {
+        float cpu = get_cpu_usage();
+        float ram = get_ram_usage();
+
+        if (cpu < 0 || ram < 0) {
+            fprintf(stderr, "Error reading system stats\n");
+            sleep(1);
+            continue;
+        }
+
+        snprintf(payload, sizeof(payload),
+                 "{\"cpu\":%.1f,\"ram\":%.1f}", cpu, ram);
+
+        int ret = mosquitto_publish(mosq, NULL, MQTT_TOPIC,
+                                    strlen(payload), payload, 0, false);
+        if (ret != MOSQ_ERR_SUCCESS)
+            fprintf(stderr, "Publish error: %s\n", mosquitto_strerror(ret));
+        else
+            printf("Sent: %s\n", payload);
+
+        sleep(2);
+    }
+
+    mosquitto_destroy(mosq);
+    mosquitto_lib_cleanup();
+    return 0;
 }
 ```
 
-## Задание для самостоятельной работы
+**4c. Нативная компиляция на Lichee:**
 
-1. **Базовая задача**: Разверните MQTT-брокер на Lichee RV Dock и создайте простого клиента, который публикует тестовые данные.
+```bash
+$ gcc -o mqtt_c_publisher mqtt_c_publisher.c -lmosquitto
+$ ./mqtt_c_publisher
+```
 
-2. **Средняя задача**: Интегрируйте систему из лабораторной №12 с MQTT, чтобы данные с Arduino передавались не только по SPI, но и публиковались в MQTT-брокер.
+Скомпилированный бинарный файл загружается на Lichee через `scp` и запускается нативно.
 
-3. **Продвинутая задача**: Создайте веб-интерфейс для мониторинга данных в реальном времени с использованием WebSocket и MQTT.
+## Задание
 
-4. **Дополнительная задача**: Реализуйте систему управления, где веб-интерфейс может отправлять команды Arduino через MQTT (например, включить/выключить светодиод).
+Ознакомившись с подготовительным материалом, выполните следующие подзадачи:
 
-## Контрольные вопросы
+1. **Базовая задача.** Установите и запустите MQTT-брокер Mosquitto на Lichee RV Dock. Настройте брокер на приём подключений со всех сетевых интерфейсов (`listener 1883 0.0.0.0`). Протестируйте публикацию и подписку между ПК и Lichee через утилиты `mosquitto_pub` и `mosquitto_sub`.
 
-1. В чём преимущества архитектуры "издатель-подписчик" по сравнению с клиент-серверной архитектурой для IoT-систем?
-2. Какие уровни QoS существуют в MQTT и в каких сценариях каждый из них целесообразно использовать?
-3. Как обеспечивается безопасность в MQTT? Какие механизмы аутентификации и шифрования поддерживаются?
-4. Чем отличается MQTT от других протоколов для IoT, таких как CoAP или HTTP/2?
-5. Как организовать иерархию топиков для системы умного дома с множеством датчиков и устройств?
-6. Какие проблемы могут возникнуть при использовании MQTT в сетях с нестабильным соединением и как их решить?
-7. Как масштабировать MQTT-инфраструктуру при увеличении количества устройств?
-8. В чём преимущества использования MQTT поверх WebSocket для веб-приложений?
-9. Как реализовать retained messages и will messages в MQTT и для чего они используются?
-10. Какие библиотеки для работы с MQTT существуют для различных платформ (Arduino, Python, JavaScript)?
+2. **Основная задача.** Реализуйте распределённую систему мониторинга загрузки одноплатника:
+   - На Lichee: напишите Python-скрипт-издатель, публикующий загрузку CPU и использование RAM (в процентах) в топик `lichee/stats` раз в 2 секунды. Данные передавайте в формате JSON: `{"cpu": 12.3, "ram": 45.7}`.
+   - На ПК: напишите Python-скрипт-подписчик, подключающийся к брокеру на Lichee (по IP-адресу), принимающий данные из топика `lichee/stats` и выводящий их в консоль в читаемом виде: `CPU: 12.3%   RAM: 45.7%`.
+   - Продемонстрируйте одновременную работу издателя (на Lichee) и подписчика (на ПК).
 
-## Дополнительные материалы
+3. **Дополнительная часть (C-клиент).** Напишите аналог MQTT-издателя на языке C,публикующий те же системные метрики. Выполните нативную компиляцию программы и проверьте её работу на Lichee.
 
-1. **Официальная документация MQTT**: https://mqtt.org/
-2. **Документация Mosquitto**: https://mosquitto.org/documentation/
-3. **Библиотека Paho MQTT для Python**: https://github.com/eclipse/paho.mqtt.python
-4. **Библиотека PubSubClient для Arduino**: https://github.com/knolleary/pubsubclient
-5. **MQTT Explorer** (визуальный клиент): http://mqtt-explorer.com/
-6. **Статья "MQTT Essentials"**: https://www.hivemq.com/mqtt-essentials/
+## Полезные ссылки
 
-## Примечания
-
-- Для работы MQTT необходимо, чтобы устройства были в одной сети
-- При использовании WiFi на Arduino убедитесь в стабильности соединения
-- Для production-систем рекомендуется использовать TLS/SSL шифрование
-- MQTT-брокер можно развернуть не только на Lichee, но и на облачных платформах (AWS IoT, Azure IoT Hub, etc.)
-- Веб-интерфейс можно разместить на том же Lichee RV Dock или на отдельном сервере
+- [Официальный сайт MQTT](https://mqtt.org/)
+- [Документация Mosquitto](https://mosquitto.org/documentation/)
+- [Eclipse Paho Python](https://github.com/eclipse/paho.mqtt.python)
+- [Документация libmosquitto](https://mosquitto.org/api/files/mosquitto-h.html)
